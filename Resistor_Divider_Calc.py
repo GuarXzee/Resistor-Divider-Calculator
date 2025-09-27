@@ -1,18 +1,23 @@
 import sys
 import pandas as pd
 import itertools
-import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton,
     QTextEdit, QVBoxLayout, QCheckBox, QHBoxLayout
 )
 from PyQt5.QtGui import QPainter, QPen, QFont, QColor, QBrush
 from PyQt5.QtCore import Qt, QPointF
+import math
 
+def fmt(val):
+    if val is None or (isinstance(val, float) and math.isnan(val)):
+        return "∞"
+    return f"{val:.2f}"
 
 class CircuitWidget(QWidget):
     def __init__(self):
         super().__init__()
+        # Default placeholders (all 4 resistors drawn at startup)
         self.rup1 = None
         self.rup2 = None
         self.rdn1 = None
@@ -22,7 +27,6 @@ class CircuitWidget(QWidget):
         self.Vout = None
 
     def set_values(self, up, dn, Vup, Vdn, Vout):
-        """Update resistor values and voltages for drawing"""
         self.rup1 = up["R1"]
         self.rup2 = up["R2"] if pd.notna(up["R2"]) else None
         self.rdn1 = dn["R1"]
@@ -36,7 +40,6 @@ class CircuitWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Coordinates
         w = self.width()
         h = self.height()
         mid_x = w // 2
@@ -47,44 +50,56 @@ class CircuitWidget(QWidget):
         pen = QPen(Qt.black, 2)
         painter.setPen(pen)
 
-        # --- Draw Vup (orange box) ---
-        if self.Vup is not None:
-            painter.setBrush(QBrush(QColor("orange")))
-            painter.drawRect(mid_x - 60, top_y - 30, 70, 25)
-            painter.setFont(QFont("Arial", 9, QFont.Bold))
-            painter.drawText(mid_x - 55, top_y - 12, f"{self.Vup:.2f} V")
+        # --- Voltage boxes ---
+        painter.setFont(QFont("Arial", 9, QFont.Bold))
+        painter.setBrush(QBrush(QColor("orange")))
+        painter.drawRect(mid_x - 60, top_y - 30, 70, 25)
+        painter.drawText(mid_x - 55, top_y - 12,
+                         f"{self.Vup:.2f} V" if self.Vup is not None else "-- V")
 
-        # --- Draw Vdn (orange box) ---
-        if self.Vdn is not None:
-            painter.setBrush(QBrush(QColor("orange")))
-            painter.drawRect(mid_x - 60, bot_y + 5, 70, 25)
-            painter.setFont(QFont("Arial", 9, QFont.Bold))
-            painter.drawText(mid_x - 55, bot_y + 22, f"{self.Vdn:.2f} V")
+        painter.drawRect(mid_x - 60, bot_y + 5, 70, 25)
+        painter.drawText(mid_x - 55, bot_y + 22,
+                         f"{self.Vdn:.2f} V" if self.Vdn is not None else "-- V")
 
-        # --- Draw Vout (orange box) ---
-        if self.Vout is not None:
-            painter.setBrush(QBrush(QColor("orange")))
-            painter.drawRect(mid_x + 65, mid_y - 12, 70, 25)
-            painter.setFont(QFont("Arial", 9, QFont.Bold))
-            painter.drawText(mid_x + 70, mid_y + 5, f"{self.Vout:.3f} V")
+        painter.drawRect(mid_x + 65, mid_y - 12, 70, 25)
+        painter.drawText(mid_x + 70, mid_y + 5,
+                         f"{self.Vout:.3f} V" if self.Vout is not None else "-- V")
 
-        # Reset brush
         painter.setBrush(Qt.NoBrush)
 
-        # Draw wires
-        painter.drawLine(mid_x, top_y, mid_x, bot_y)       # vertical
-        painter.drawLine(mid_x, mid_y, mid_x + 65, mid_y)  # Vout branch
+        # Parallel rails (spread wider apart)
+        left_x = mid_x - 60
+        right_x = mid_x + 60
 
-        # Draw resistors
-        self.draw_resistor(painter, mid_x, top_y + 20, mid_y - 20,
-                           label_up=self.rup1, label_down=self.rup2, name="Rup")
-        self.draw_resistor(painter, mid_x, mid_y + 20, bot_y - 20,
-                           label_up=self.rdn1, label_down=self.rdn2, name="Rdn")
+        # Vertical rails
+        painter.drawLine(left_x, top_y, left_x, bot_y)
+        painter.drawLine(right_x, top_y, right_x, bot_y)
 
-    def draw_resistor(self, painter, x, y1, y2, label_up=None, label_down=None, name="R"):
-        """Draw a resistor symbol (zigzag) with labels"""
+        # Connect Vup across rails
+        painter.drawLine(left_x, top_y, right_x, top_y)
+
+        # Connect Vdn across rails
+        painter.drawLine(left_x, bot_y, right_x, bot_y)
+
+        # Horizontal node at Vout
+        painter.drawLine(left_x, mid_y, right_x, mid_y)
+        painter.drawLine(mid_x, mid_y, mid_x + 65, mid_y)
+
+        # --- Draw all 4 resistors with extra spacing ---
+        self.draw_resistor(painter, left_x, top_y + 60, mid_y - 60,
+                           "Rup1", self.rup1)
+        self.draw_resistor(painter, right_x, top_y + 60, mid_y - 60,
+                           "Rup2", self.rup2)
+        self.draw_resistor(painter, left_x, mid_y + 60, bot_y - 60,
+                           "Rdn1", self.rdn1)
+        self.draw_resistor(painter, right_x, mid_y + 60, bot_y - 60,
+                           "Rdn2", self.rdn2)
+
+    def draw_resistor(self, painter, x, y1, y2, name, value):
+        """Draw one resistor with zigzag and label always on the right side"""
+        # Resistor body
         painter.setBrush(QBrush(QColor("yellow")))
-        painter.drawRect(x - 20, y1, 40, (y2 - y1))
+        painter.drawRect(x - 10, y1, 20, (y2 - y1))
         painter.setBrush(Qt.NoBrush)
 
         # Zigzag
@@ -92,15 +107,21 @@ class CircuitWidget(QWidget):
         zigzag = []
         direction = 1
         for i in range(7):
-            zigzag.append((x + direction * 10, y1 + i * step))
+            zigzag.append((x + direction * 8, y1 + i * step))
             direction *= -1
         painter.drawPolyline(*[QPointF(px, py) for px, py in zigzag])
 
+        # Label value formatting
         painter.setFont(QFont("Arial", 8))
-        if label_up:
-            painter.drawText(x + 25, (y1 + y2) // 2 - 10, f"{name}1={label_up:.2f} Ω")
-        if label_down:
-            painter.drawText(x + 25, (y1 + y2) // 2 + 10, f"{name}2={label_down:.2f} Ω")
+        if value is None:
+            label_value = "∞ Ω"
+        else:
+            label_value = f"{value:.2f} Ω"
+
+        # Always draw labels to the right
+        text_y = (y1 + y2) // 2
+        painter.drawText(x + 20, text_y - 5, name)
+        painter.drawText(x + 20, text_y + 10, label_value)
 
 
 class ResistorDividerApp(QWidget):
@@ -112,17 +133,17 @@ class ResistorDividerApp(QWidget):
 
     def initUI(self):
         self.setWindowTitle("Voltage Divider Circuit - Resistor Pair Calculator")
-        self.setGeometry(200, 100, 1000, 700)
+        self.setGeometry(200, 100, 1150, 700)
 
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
 
         # Inputs
         self.input_v1 = QLineEdit()
         self.input_v2 = QLineEdit("0")
         self.input_vout = QLineEdit()
-        layout.addWidget(QLabel("Vup:")); layout.addWidget(self.input_v1)
-        layout.addWidget(QLabel("Vdn:")); layout.addWidget(self.input_v2)
-        layout.addWidget(QLabel("Desired Vout:")); layout.addWidget(self.input_vout)
+        main_layout.addWidget(QLabel("Vup:")); main_layout.addWidget(self.input_v1)
+        main_layout.addWidget(QLabel("Vdn:")); main_layout.addWidget(self.input_v2)
+        main_layout.addWidget(QLabel("Desired Vout:")); main_layout.addWidget(self.input_vout)
 
         # Override controls
         override_layout = QHBoxLayout()
@@ -133,27 +154,28 @@ class ResistorDividerApp(QWidget):
         override_layout.addWidget(self.override_box)
         override_layout.addWidget(self.chk_rup)
         override_layout.addWidget(self.chk_rdn)
-        layout.addLayout(override_layout)
+        main_layout.addLayout(override_layout)
 
         # Button
         self.button = QPushButton("Calculate")
-        layout.addWidget(self.button)
+        main_layout.addWidget(self.button)
         self.button.clicked.connect(self.calculate_divider)
 
-        # Result area
+        # Side-by-side layout
+        side_layout = QHBoxLayout()
         self.result_area = QTextEdit()
         self.result_area.setReadOnly(True)
-        layout.addWidget(self.result_area)
+        self.result_area.setMinimumWidth(400)
+        side_layout.addWidget(self.result_area)
 
-        # Circuit drawing
         self.circuit = CircuitWidget()
-        self.circuit.setMinimumHeight(350)
-        layout.addWidget(self.circuit)
+        self.circuit.setMinimumSize(650, 450)
+        side_layout.addWidget(self.circuit)
 
-        self.setLayout(layout)
+        main_layout.addLayout(side_layout)
+        self.setLayout(main_layout)
 
     def prepare_pairs(self):
-        """Generate resistor pairs with 3-decimal precision"""
         base_res = pd.read_csv("resistors.csv")["Resistor"].tolist()
         pairs = []
         seen = set()
@@ -168,8 +190,7 @@ class ResistorDividerApp(QWidget):
             if req_rounded not in seen:
                 pairs.append({"Req": req_rounded, "R1": round(r1, 3), "R2": round(r2, 3)})
                 seen.add(req_rounded)
-        df = pd.DataFrame(pairs)
-        df.to_csv("resistor_pairs.csv", index=False)
+        pd.DataFrame(pairs).to_csv("resistor_pairs.csv", index=False)
 
     def load_pairs(self):
         self.pairs = pd.read_csv("resistor_pairs.csv").to_dict(orient="records")
@@ -211,15 +232,32 @@ class ResistorDividerApp(QWidget):
 
         if best_combo:
             up, dn, vcalc = best_combo
-            self.result_area.setText(
-                f"Best Match:\n"
-                f" Rup1 = {up['R1']:.2f} Ω, Rup2 = {up['R2'] if pd.notna(up['R2']) else '-'}\n"
-                f" Rdn1 = {dn['R1']:.2f} Ω, Rdn2 = {dn['R2'] if pd.notna(dn['R2']) else '-'}\n"
-                f" Req_up = {up['Req']:.2f} Ω\n"
-                f" Req_dn = {dn['Req']:.2f} Ω\n"
-                f" Vout ≈ {vcalc:.3f} V (target {Vout_target:.3f} V)\n"
-                f" Error = {best_error:.3f} V"
-            )
+            Rup = up["Req"]; Rdn = dn["Req"]
+            Vin_required = Vdn + ((Vout_target - Vdn) * (Rup + Rdn)) / Rdn
+
+            def fmt(val): return f"{val:.2f}" if val is not None else "∞"
+
+            result_html = f"""
+            <h3>Best Match</h3>
+            <table border="1" cellspacing="0" cellpadding="4" 
+                   style="border-collapse:collapse; text-align:center;">
+                <tr style="background-color:#f0f0f0;">
+                    <th>Resistor</th><th>Value (Ω)</th>
+                </tr>
+                <tr><td>Rup1</td><td>{fmt(up['R1'])}</td></tr>
+                <tr><td>Rup2</td><td>{fmt(up['R2'])}</td></tr>
+                <tr><td>Rdn1</td><td>{fmt(dn['R1'])}</td></tr>
+                <tr><td>Rdn2</td><td>{fmt(dn['R2'])}</td></tr>
+                <tr><td><b>Req_up</b></td><td><b>{Rup:.2f}</b></td></tr>
+                <tr><td><b>Req_dn</b></td><td><b>{Rdn:.2f}</b></td></tr>
+            </table>
+            <br>
+            <p><b>Vout:</b> {vcalc:.3f} V (Target = {Vout_target:.3f} V)</p>
+            <p><b style="color:red;">Error:</b> {best_error:.3f} V</p>
+            <p><b style="color:blue;">Required Vin for exact target:</b> {Vin_required:.3f} V</p>
+            """
+
+            self.result_area.setHtml(result_html)
             self.circuit.set_values(up, dn, Vup, Vdn, vcalc)
 
 
