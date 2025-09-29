@@ -1,18 +1,14 @@
 import sys
 import pandas as pd
 import itertools
+import math
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton,
     QTextEdit, QVBoxLayout, QCheckBox, QHBoxLayout
 )
 from PyQt5.QtGui import QPainter, QPen, QFont, QColor, QBrush
 from PyQt5.QtCore import Qt, QPointF
-import math
 
-def fmt(val):
-    if val is None or (isinstance(val, float) and math.isnan(val)):
-        return "∞"
-    return f"{val:.2f}"
 
 class CircuitWidget(QWidget):
     def __init__(self):
@@ -113,7 +109,7 @@ class CircuitWidget(QWidget):
 
         # Label value formatting
         painter.setFont(QFont("Arial", 8))
-        if value is None:
+        if value is None or (isinstance(value, float) and math.isnan(value)):
             label_value = "∞ Ω"
         else:
             label_value = f"{value:.2f} Ω"
@@ -133,7 +129,7 @@ class ResistorDividerApp(QWidget):
 
     def initUI(self):
         self.setWindowTitle("Voltage Divider Circuit - Resistor Pair Calculator")
-        self.setGeometry(200, 100, 1150, 700)
+        self.setGeometry(200, 100, 1150, 750)
 
         main_layout = QVBoxLayout()
 
@@ -155,6 +151,15 @@ class ResistorDividerApp(QWidget):
         override_layout.addWidget(self.chk_rup)
         override_layout.addWidget(self.chk_rdn)
         main_layout.addLayout(override_layout)
+
+        # New Iload controls
+        iload_layout = QHBoxLayout()
+        self.input_iload = QLineEdit()
+        self.input_iload.setPlaceholderText("Iload (A)")
+        self.chk_iload = QCheckBox("Enable Iload")
+        iload_layout.addWidget(self.input_iload)
+        iload_layout.addWidget(self.chk_iload)
+        main_layout.addLayout(iload_layout)
 
         # Button
         self.button = QPushButton("Calculate")
@@ -216,6 +221,15 @@ class ResistorDividerApp(QWidget):
                 self.result_area.setText("Invalid override value.")
                 return
 
+        iload_enabled = self.chk_iload.isChecked()
+        Iload = 0.0
+        if iload_enabled:
+            try:
+                Iload = float(self.input_iload.text())
+            except ValueError:
+                self.result_area.setText("Invalid Iload value.")
+                return
+
         best_error = float("inf")
         best_combo = None
 
@@ -224,7 +238,14 @@ class ResistorDividerApp(QWidget):
                 Rup = up["Req"]; Rdn = dn["Req"]
                 if Rup <= 0 or Rdn <= 0:
                     continue
-                Vout_calc = Vdn + (Rdn / (Rup + Rdn)) * (Vup - Vdn)
+
+                if iload_enabled and Iload > 0:
+                    # KCL with Iload sink
+                    Vout_calc = ( (Vup / Rup) + (Vdn / Rdn) - Iload ) / (1/Rup + 1/Rdn)
+                else:
+                    # Normal divider
+                    Vout_calc = Vdn + (Rdn / (Rup + Rdn)) * (Vup - Vdn)
+
                 error = abs(Vout_calc - Vout_target)
                 if error < best_error:
                     best_error = error
@@ -233,9 +254,13 @@ class ResistorDividerApp(QWidget):
         if best_combo:
             up, dn, vcalc = best_combo
             Rup = up["Req"]; Rdn = dn["Req"]
+
             Vin_required = Vdn + ((Vout_target - Vdn) * (Rup + Rdn)) / Rdn
 
-            def fmt(val): return f"{val:.2f}" if val is not None else "∞"
+            def fmt(val):
+                if val is None or (isinstance(val, float) and math.isnan(val)):
+                    return "∞"
+                return f"{val:.2f}"
 
             result_html = f"""
             <h3>Best Match</h3>
@@ -256,6 +281,9 @@ class ResistorDividerApp(QWidget):
             <p><b style="color:red;">Error:</b> {best_error:.3f} V</p>
             <p><b style="color:blue;">Required Vin for exact target:</b> {Vin_required:.3f} V</p>
             """
+
+            if iload_enabled:
+                result_html += f"<p><b>Iload:</b> {Iload:.6f} A applied</p>"
 
             self.result_area.setHtml(result_html)
             self.circuit.set_values(up, dn, Vup, Vdn, vcalc)
